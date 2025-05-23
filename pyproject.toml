@@ -1,0 +1,8 @@
+[project]
+name = "log-aggregator"
+version = "1.0.0"
+description = "Production-grade log processing pipeline"
+
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
