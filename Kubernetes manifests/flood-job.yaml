@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flood-queue
+  namespace: event-pipeline
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      containers:
+      - name: flood
+        image: h1shamdev/aggregator-producer:latest
+        env:
+          - name: RABBITMQ_HOST
+            value: rabbitmq.event-pipeline.svc.cluster.local
+        command: ["/bin/sh","-c"]
+        args:
+          - |
+            for i in $(seq 1 1000); do
+              python producer.py
+            done
+      restartPolicy: Never

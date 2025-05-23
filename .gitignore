@@ -1,0 +1,44 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+env/
+venv/
+*.egg-info/
+*.egg
+dist/
+build/
+
+# IDE and editor folders
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# Kubernetes local dev
+flood-job.yaml
+aggregated_logs.json
+failed_logs.ndjson
+
+# AWS credentials (never commit!)
+.aws/
+
+# Docker
+docker-compose.override.yml
+**/Dockerfile.*
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# MacOS
+.DS_Store
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
