@@ -6,38 +6,45 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from datetime import datetime
 
 import boto3
-import pika, json
+import pika
+import json
+from decouple import config
 
-S3_BUCKET = "log-aggregator-2024"
-BATCH_SIZE = 50
-MAX_WORKERS = 5
-RETRY_LIMIT = 3
-DLQ_NAME = "log_dlq"
+# ─── Configuration ────────────────────────────────────────────────────────────
+RABBITMQ_HOST    = config('RABBITMQ_HOST',    default='localhost')
+RABBITMQ_QUEUE   = config('RABBITMQ_QUEUE',   default='log_queue')
+RABBITMQ_DLQ     = config('RABBITMQ_DLQ',     default='log_dlq')
+S3_BUCKET        = config('S3_BUCKET')
+AWS_REGION       = config('AWS_REGION',       default='us-east-1')
+BATCH_SIZE       = config('BATCH_SIZE',       cast=int, default=50)
+MAX_WORKERS      = config('MAX_WORKERS',      cast=int, default=5)
+RETRY_LIMIT      = config('RETRY_LIMIT',      cast=int, default=3)
+FALLBACK_PATH    = config('FALLBACK_PATH',    default='/tmp/failed_logs.ndjson')
+# ───────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def initialize_s3():
+    boto3_kwargs = {'region_name': AWS_REGION}
     try:
-        return boto3.client('s3')
+        return boto3.client('s3', **boto3_kwargs)
     except Exception as e:
-        logger.critical(f'failed to init S3:{e}')
+        logger.critical(f'failed to init S3: {e}')
         raise
 
 
 def initialize_rabbitmq():
     try:
-        rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
-
-        connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host))
+        conn_params = pika.ConnectionParameters(RABBITMQ_HOST)
+        connection = pika.BlockingConnection(conn_params)
         channel = connection.channel()
 
-        channel.queue_declare("log_queue", durable=True)
-
+        channel.queue_declare(RABBITMQ_QUEUE, durable=True)
         channel.exchange_declare(exchange="dlx", exchange_type='direct')
-        channel.queue_declare(queue=DLQ_NAME, durable=True)
-        channel.queue_bind(exchange="dlx", queue=DLQ_NAME, routing_key=DLQ_NAME)
+        channel.queue_declare(queue=RABBITMQ_DLQ, durable=True)
+        channel.queue_bind(exchange="dlx", queue=RABBITMQ_DLQ, routing_key=RABBITMQ_DLQ)
 
         return connection, channel
     except Exception as e:
@@ -47,57 +54,52 @@ def initialize_rabbitmq():
 
 def process_batch(s3_client, batch):
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        results = list(executor.map(
-            lambda log: process_single_log(s3_client, log),
-            batch
-        ))
+        results = list(executor.map(lambda log: process_single_log(s3_client, log), batch))
 
     success_rate = sum(results) / len(results)
     if success_rate < 0.9:
         alert_admin(
-            f"Low upload success ({success_rate * 100:.1f}%). "
-            f"Failed {len(results) - sum(results)}/{len(results)}")
+            f"Low upload success ({success_rate*100:.1f}%). "
+            f"Failed {len(results)-sum(results)}/{len(results)}"
+        )
     return success_rate
 
 
 def process_single_log(s3_client, log):
-    timestamp = datetime.now().isoformat()
-    key = f"logs/{timestamp[:10]}/{log['source']}/{timestamp[11:19]}.json"
+    timestamp = datetime.utcnow().isoformat()
+    key = f"logs/{timestamp[:10]}/{log.get('source','unknown')}/{timestamp[11:19]}.json"
 
-    for attempt in range(RETRY_LIMIT):
+    for attempt in range(1, RETRY_LIMIT + 1):
         try:
             s3_client.put_object(
                 Bucket=S3_BUCKET,
                 Key=key,
                 Body=json.dumps(log),
-                Metadata={
-                    'attempt': str(attempt + 1),
-                    'source': log.get('source', 'unknown')
-                }
+                Metadata={'attempt': str(attempt), 'source': log.get('source', 'unknown')}
             )
             return True
         except Exception as e:
-            if attempt == RETRY_LIMIT - 1:
+            if attempt == RETRY_LIMIT:
                 logger.error(f"Final fail after {RETRY_LIMIT} attempts: {e}")
-                handle_failed_log(log,e)
+                handle_failed_log(log, e)
                 return False
-            wait = min(2 ** attempt, 10)
-            time.sleep(wait)
+            time.sleep(min(2 ** (attempt - 1), 10))
 
 
 def handle_failed_log(log, error):
     """Fallback storage for failed logs"""
     try:
-        with open('failed_logs.ndjson', 'a') as f:
-            log['_error'] = str(error)
-            f.write(json.dumps(log) + '\n')
+        log_copy = dict(log)
+        log_copy['_error'] = str(error)
+        with open(FALLBACK_PATH, 'a') as f:
+            f.write(json.dumps(log_copy) + '\n')
     except Exception as e:
         logger.critical(f"Failed to save log locally: {e}")
 
 
 def alert_admin(message):
     """Simple email/slack alert placeholder"""
-    print(f"ADMIN ALERT: {message}")
+    logger.warning(f"ADMIN ALERT: {message}")
 
 
 def message_callback(s3_client, batch_buffer):
@@ -106,19 +108,14 @@ def message_callback(s3_client, batch_buffer):
             log = json.loads(body)
             batch_buffer.append(log)
             if len(batch_buffer) >= BATCH_SIZE:
-                current_batch = [batch_buffer.popleft() for _ in range(BATCH_SIZE)]
-                process_batch(s3_client, current_batch)
+                batch = [batch_buffer.popleft() for _ in range(BATCH_SIZE)]
+                process_batch(s3_client, batch)
 
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
         except json.JSONDecodeError:
             logger.error(f"Invalid JSON: {body}")
-            ch.basic_publish(
-                exchange="dlx",
-                routing_key=DLQ_NAME,
-                body=body
-            )
-
+            ch.basic_publish(exchange="dlx", routing_key=RABBITMQ_DLQ, body=body)
             ch.basic_ack(delivery_tag=method.delivery_tag)
 
         except Exception as e:
@@ -126,31 +123,31 @@ def message_callback(s3_client, batch_buffer):
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
     return callback
 
-def main():
 
+def main():
     try:
         logger.info("Initializing services...")
-        s3_client = initialize_s3()
-        rmq_connection ,rmp_channel = initialize_rabbitmq()
+        s3_client, = (initialize_s3(),)
+        rmq_conn, rmq_channel = initialize_rabbitmq()
         batch_buffer = deque(maxlen=BATCH_SIZE * 2)
 
         logger.info("Starting consumer...")
-
-        rmp_channel.basic_consume(
-            queue="log_queue",
+        rmq_channel.basic_consume(
+            queue=RABBITMQ_QUEUE,
             on_message_callback=message_callback(s3_client, batch_buffer),
             consumer_tag="log_aggregator"
         )
-        rmp_channel.start_consuming()
+        rmq_channel.start_consuming()
 
     except KeyboardInterrupt:
         logger.info("Shutting down gracefully...")
     except Exception as e:
-        logger.critical(f'Fatal Error:{e}')
+        logger.critical(f'Fatal Error: {e}')
     finally:
-        if 'rmq_connection' in locals():
-            rmq_connection.close()
+        if 'rmq_conn' in locals():
+            rmq_conn.close()
         logger.info("Service stopped")
+
 
 if __name__ == "__main__":
     main()

@@ -1,25 +1,43 @@
-import os
+import time
+import random
+import json
 
-import pika, json, random, time
+from decouple import config
+import pika
 
-# mock log data
-sources =["app1","app2","app3"]
-events = ["login_failed", "high-cpu","new_user"]
+# ─── Configuration ────────────────────────────────────────────────────────────
+RABBITMQ_HOST  = config('RABBITMQ_HOST',  default='localhost')
+RABBITMQ_QUEUE = config('RABBITMQ_QUEUE', default='log_queue')
+# ───────────────────────────────────────────────────────────────────────────────
 
-#conncet to RabbitMQ
-rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
+# Mock log data
+SOURCES = ["app1", "app2", "app3"]
+EVENTS  = ["login_failed", "high-cpu", "new_user"]
 
-connection = pika.BlockingConnection(pika.ConnectionParameters(rabbitmq_host))
-channel = connection.channel()
-channel.queue_declare(queue="log_queue", durable=True)
+def main():
+    # Connect to RabbitMQ
+    connection = pika.BlockingConnection(
+        pika.ConnectionParameters(RABBITMQ_HOST)
+    )
+    channel = connection.channel()
+    channel.queue_declare(queue=RABBITMQ_QUEUE, durable=True)
 
-for i in range(10):
-    log = {
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "source": random.choice(sources),
-        "event": random.choice(events),
-        "count": random.randint(1,5)
-    }
-    channel.basic_publish(exchange="",routing_key="log_queue", body=json.dumps(log))
-    print(f"Sent: {log}")
-connection.close()
+    for _ in range(10):
+        log = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source":    random.choice(SOURCES),
+            "event":     random.choice(EVENTS),
+            "count":     random.randint(1, 5)
+        }
+        channel.basic_publish(
+            exchange="",
+            routing_key=RABBITMQ_QUEUE,
+            body=json.dumps(log)
+        )
+        print(f"Sent: {log}")
+        time.sleep(0.5)  # small pause for readability
+
+    connection.close()
+
+if __name__ == "__main__":
+    main()
