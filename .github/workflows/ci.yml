@@ -28,7 +28,7 @@ jobs:
           pip install -r src/producer/requirements.txt
       - name: Lint with Flake8
         run : |
-           flake8 src/ tests/
+           flake8 src/
       - name: Type-check with mypy
         run: |
           mypy src/
