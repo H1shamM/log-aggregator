@@ -1,5 +1,5 @@
+import json
 import logging
-import os
 import time
 from collections import deque
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -7,19 +7,18 @@ from datetime import datetime
 
 import boto3
 import pika
-import json
 from decouple import config
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-RABBITMQ_HOST    = config('RABBITMQ_HOST',    default='localhost')
-RABBITMQ_QUEUE   = config('RABBITMQ_QUEUE',   default='log_queue')
-RABBITMQ_DLQ     = config('RABBITMQ_DLQ',     default='log_dlq')
-S3_BUCKET        = config('S3_BUCKET')
-AWS_REGION       = config('AWS_REGION',       default='us-east-1')
-BATCH_SIZE       = config('BATCH_SIZE',       cast=int, default=50)
-MAX_WORKERS      = config('MAX_WORKERS',      cast=int, default=5)
-RETRY_LIMIT      = config('RETRY_LIMIT',      cast=int, default=3)
-FALLBACK_PATH    = config('FALLBACK_PATH',    default='/tmp/failed_logs.ndjson')
+RABBITMQ_HOST = config('RABBITMQ_HOST', default='localhost')
+RABBITMQ_QUEUE = config('RABBITMQ_QUEUE', default='log_queue')
+RABBITMQ_DLQ = config('RABBITMQ_DLQ', default='log_dlq')
+S3_BUCKET = config('S3_BUCKET')
+AWS_REGION = config('AWS_REGION', default='us-east-1')
+BATCH_SIZE = config('BATCH_SIZE', cast=int, default=50)
+MAX_WORKERS = config('MAX_WORKERS', cast=int, default=5)
+RETRY_LIMIT = config('RETRY_LIMIT', cast=int, default=3)
+FALLBACK_PATH = config('FALLBACK_PATH', default='/tmp/failed_logs.ndjson')
 # ───────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(level=logging.INFO)
@@ -59,15 +58,15 @@ def process_batch(s3_client, batch):
     success_rate = sum(results) / len(results)
     if success_rate < 0.9:
         alert_admin(
-            f"Low upload success ({success_rate*100:.1f}%). "
-            f"Failed {len(results)-sum(results)}/{len(results)}"
+            f"Low upload success ({success_rate * 100:.1f}%). "
+            f"Failed {len(results) - sum(results)}/{len(results)}"
         )
     return success_rate
 
 
 def process_single_log(s3_client, log):
     timestamp = datetime.utcnow().isoformat()
-    key = f"logs/{timestamp[:10]}/{log.get('source','unknown')}/{timestamp[11:19]}.json"
+    key = f"logs/{timestamp[:10]}/{log.get('source', 'unknown')}/{timestamp[11:19]}.json"
 
     for attempt in range(1, RETRY_LIMIT + 1):
         try:
@@ -121,6 +120,7 @@ def message_callback(s3_client, batch_buffer):
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
     return callback
 
 
