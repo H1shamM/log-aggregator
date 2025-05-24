@@ -11,6 +11,8 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
     steps:
       - name: Checkout code
         uses: actions/checkout@v3

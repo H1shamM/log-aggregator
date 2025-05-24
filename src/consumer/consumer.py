@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 from collections import deque
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -53,7 +54,11 @@ def initialize_rabbitmq():
 
 def process_batch(s3_client, batch):
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        results = list(executor.map(lambda log: process_single_log(s3_client, log), batch))
+        results = list(
+            executor.map(
+                lambda log: process_single_log(s3_client, log), batch
+            )
+        )
 
     success_rate = sum(results) / len(results)
     if success_rate < 0.9:
@@ -66,7 +71,8 @@ def process_batch(s3_client, batch):
 
 def process_single_log(s3_client, log):
     timestamp = datetime.utcnow().isoformat()
-    key = f"logs/{timestamp[:10]}/{log.get('source', 'unknown')}/{timestamp[11:19]}.json"
+    key = (f"logs/{timestamp[:10]}/"
+           f"{log.get('source', 'unknown')}/{timestamp[11:19]}.json")
 
     for attempt in range(1, RETRY_LIMIT + 1):
         try:
@@ -74,7 +80,10 @@ def process_single_log(s3_client, log):
                 Bucket=S3_BUCKET,
                 Key=key,
                 Body=json.dumps(log),
-                Metadata={'attempt': str(attempt), 'source': log.get('source', 'unknown')}
+                Metadata={
+                    'attempt': str(attempt),
+                    'source': log.get('source', 'unknown')
+                }
             )
             return True
         except Exception as e:
@@ -83,6 +92,7 @@ def process_single_log(s3_client, log):
                 handle_failed_log(log, e)
                 return False
             time.sleep(min(2 ** (attempt - 1), 10))
+    return False
 
 
 def handle_failed_log(log, error):
@@ -90,7 +100,13 @@ def handle_failed_log(log, error):
     try:
         log_copy = dict(log)
         log_copy['_error'] = str(error)
-        with open(FALLBACK_PATH, 'a') as f:
+
+        fallback_path = os.getenv('FALLBACK_PATH', FALLBACK_PATH)
+        dirpath = os.path.dirname(fallback_path)
+        if dirpath and not os.path.exists(dirpath):
+            os.makedirs(dirpath, exist_ok=True)
+
+        with open(fallback_path, 'a') as f:
             f.write(json.dumps(log_copy) + '\n')
     except Exception as e:
         logger.critical(f"Failed to save log locally: {e}")
