@@ -1,4 +1,6 @@
 import time
+
+import pika
 import pytest
 from collections import deque
 
@@ -17,7 +19,11 @@ def test_publish_consume_fallback(tmp_path, monkeypatch):
       • Consume via message_callback.
       • Verify it shows up in the DLQ queue.
     """
-    conn, chan = initialize_rabbitmq()
+    try:
+        conn, chan = initialize_rabbitmq()
+    except pika.exceptions.AMQPConnectionError:
+        pytest.skip("RabbitMQ broker unavailable, skipping integration test")
+
     chan.queue_purge(queue=RABBITMQ_QUEUE)
     chan.queue_purge(queue=RABBITMQ_DLQ)
 
