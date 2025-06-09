@@ -26,12 +26,14 @@ jobs:
           pip install -r requirements-dev.txt
           pip install -r src/consumer/requirements.txt
           pip install -r src/producer/requirements.txt
+          pip install coverage
       - name: Lint with Flake8
         run : |
            flake8 src/
       - name: Type-check with mypy
         run: |
           mypy src/
-      - name: Run tests with pytest
+      - name: Run tests under coverage
         run: |
-          pytest --maxfail=1 --disable-warnings -q
+          coverage run -m pytest --maxfail=1 --disable-warnings -q
+          coverage report --fail-under=85
