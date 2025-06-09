@@ -1,0 +1,3 @@
+[run]
+omit =
+  src/consumer/tests/test_integration_publish_consume_fallback.py
