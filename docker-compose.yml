@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+  consumer:
+    build:
+      context: src/consumer
+    depends_on:
+      - rabbitmq
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_QUEUE: log_queue
+      RABBITMQ_DLQ: log_dlq
+      AWS_REGION: eu-north-1
+      S3_BUCKET: dummy-bucket
+    volumes:
+      - .:/src/consumer
+    working_dir: /src/consumer
+    command: python consumer.py
